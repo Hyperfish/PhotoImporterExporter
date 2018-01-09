@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Security;
 using System.Text;
 using Hyperfish.ImportExport.AD;
@@ -39,8 +40,9 @@ namespace Hyperfish.ImportExport
                 WriteToConsole($"3) Import photos into Active Directory");
                 WriteToConsole($"4) Import photos into SharePoint Online");
                 WriteToConsole($"5) Import photos into Exchange Online");
+                WriteToConsole($"6) Test import photos into Active Directory for one user");
 
-                WriteToConsole($"6) Exit" + Environment.NewLine);
+                WriteToConsole($"7) Exit" + Environment.NewLine);
                 
                 var consoleInput = ReadFromConsole();
                 if (string.IsNullOrWhiteSpace(consoleInput)) continue;
@@ -64,7 +66,7 @@ namespace Hyperfish.ImportExport
 
                             // export
                             case 3:
-                                ImportToActiveDirectory();
+                                ImportToActiveDirectory(false);
                                 break;
 
                             case 4:
@@ -76,6 +78,10 @@ namespace Hyperfish.ImportExport
                                 break;
 
                             case 6:
+                                ImportToActiveDirectory(true);
+                                break;
+
+                            case 7:
                                 WriteToConsole("Exiting ... ");
                                 return;
                         }
@@ -162,11 +168,19 @@ namespace Hyperfish.ImportExport
             SaveManifest(PeopleList);
         }
 
-        private static void ImportToActiveDirectory()
+        private static void ImportToActiveDirectory(bool promptForUsersToImport)
         {
             try
             {
                 Logger.Debug($"Starting import to AD");
+
+                var testUser = string.Empty;
+
+                if (promptForUsersToImport)
+                {
+                    WriteToConsole($"Upn for test user to import [e.g. aaron@contoso.com]: ");
+                    testUser = ReadFromConsole();
+                }
 
                 WriteToConsole($"Active Directory domain contoller [e.g. 192.168.1.10, or domaincontroller.contoso.com]: ");
                 var dc = ReadFromConsole();
@@ -183,8 +197,7 @@ namespace Hyperfish.ImportExport
                 Logger.Debug($"Domain controller: {dc}");
                 Logger.Debug($"Username: {username}");
                 Logger.Debug($"Domain: {domain}");
-
-
+                
                 var settings = new AdSettings()
                 {
                     AdServer = dc,
@@ -195,7 +208,26 @@ namespace Hyperfish.ImportExport
 
                 var worker = new AdWorker(settings);
 
-                worker.ImportPicsToAd(PeopleList);
+                if (promptForUsersToImport)
+                {
+                    if (!PeopleList.ContainsKey(testUser))
+                    {
+                        WriteToConsole($"Test user specified not found in user list.");
+                    }
+                    else
+                    {
+                        // make a small list
+                        var testList = new Dictionary<string, ImportExportRecord>();
+                        testList[testUser] = PeopleList[testUser];
+
+                        // just import the test list
+                        worker.ImportPicsToAd(testList);
+                    }
+                }
+                else
+                {
+                    worker.ImportPicsToAd(PeopleList);
+                }
 
                 WriteToConsole();
                 WriteToConsole($"Completed import of photos to AD. Press any key to return to main menu.");
