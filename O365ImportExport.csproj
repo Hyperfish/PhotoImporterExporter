@@ -146,6 +146,7 @@
   <ItemGroup>
     <None Include="App.config" />
     <None Include="packages.config" />
+    <None Include="ReadMe.md" />
   </ItemGroup>
   <ItemGroup>
     <Resource Include="FodyWeavers.xml" />
