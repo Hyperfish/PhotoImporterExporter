@@ -61,7 +61,7 @@ namespace Hyperfish.ImportExport
                     continue;
                 }
 
-                if (!person.HasSpoProfilePicture)
+                if (service == O365Service.Spo && !person.HasSpoProfilePicture)
                 {
                     Logger.Info($"Found user {person.Upn}, but skipping as they dont have a photo set");
                     continue;
