@@ -36,6 +36,17 @@ namespace Hyperfish.ImportExport.O365
             }
         }
 
+        public Uri SpoProfilePictureUrlLarge
+        {
+            get
+            {
+                if (this.Properties.ContainsKey(PictureAttributeName))
+                    return new Uri(this.Properties[PictureAttributeName].ToString()?.Replace("MThumb","LThumb"));
+                else
+                    return null;
+            }
+        }
+
         [JsonIgnore]
         public bool HasSpoProfilePicture => !string.IsNullOrEmpty(SpoProfilePictureUrl?.OriginalString);
     }

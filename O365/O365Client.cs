@@ -29,7 +29,7 @@ namespace Hyperfish.ImportExport.O365
             _settings = settings;
         }
 
-        public Stream DownloadProfilePhoto(O365Profile person, O365Service service)
+        public MemoryStream DownloadProfilePhoto(O365Profile person, O365Service service)
         {
 
             switch (service)
@@ -38,12 +38,17 @@ namespace Hyperfish.ImportExport.O365
 
                     var clientContext = GetSpoClientContextForSite(SpoSite.MySite);
 
-                    var uri = person.SpoProfilePictureUrl;
+                    var uri = person.SpoProfilePictureUrlLarge;
                     var serverrelativePath = uri.AbsolutePath;
 
-                    FileInformation f = Microsoft.SharePoint.Client.File.OpenBinaryDirect(clientContext, serverrelativePath);
+                    var memoryStream = new MemoryStream();
 
-                    return f.Stream;
+                    using (FileInformation f = Microsoft.SharePoint.Client.File.OpenBinaryDirect(clientContext, serverrelativePath))
+                    {
+                        f.Stream.CopyTo(memoryStream);
+                    }
+                    
+                    return memoryStream;
 
                 case O365Service.Exo:
 

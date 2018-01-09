@@ -26,6 +26,13 @@ namespace Hyperfish.ImportExport
                 var upnIdentifier = new UpnIdentifier(upn);
                 var picture = peopleToImport[upn].PhotoLocation;
 
+                if (string.IsNullOrEmpty(picture))
+                {
+                    // skip
+                    Logger.Info($"Skipping photo import for {upn}, as photo location was invalid");
+                    continue;
+                }
+
                 Stream photoStream;
 
                 Logger.Info($"Importing photo for {upn}, {picture}");

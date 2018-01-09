@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using Hyperfish.ImportExport.O365;
 using static Hyperfish.ImportExport.Log;
 
@@ -11,6 +12,7 @@ namespace Hyperfish.ImportExport
     class O365Worker
     {
         private const string PhotoDirectory = "photos";
+        private static byte[] _silouetteProfilePicLarge;
 
         private readonly O365Client _o365;
         private readonly Dictionary<string, ImportExportRecord> _allPeople = new Dictionary<string, ImportExportRecord>();
@@ -18,6 +20,25 @@ namespace Hyperfish.ImportExport
         public O365Worker(O365Settings o365Settings)
         {
             _o365 = new O365Client(o365Settings);
+        }
+
+        static O365Worker()
+        {
+            //_silouetteProfilePicLarge = File.ReadAllBytes("silhouette_LThumb.jpg");
+
+            var assembly = Assembly.GetExecutingAssembly();
+            var resourceName = "Hyperfish.ImportExport.O365.assets.silhouette_LThumb.jpg";
+            
+            var memoryStream = new MemoryStream();
+
+            using (var stream = assembly.GetManifestResourceStream(resourceName))
+            {
+                stream.Seek(0, SeekOrigin.Begin);
+                stream.CopyTo(memoryStream);
+
+                _silouetteProfilePicLarge = memoryStream.ToArray();
+            }
+            
         }
 
         public Dictionary<string, ImportExportRecord> Export(O365Service service)
@@ -71,29 +92,37 @@ namespace Hyperfish.ImportExport
 
                 try
                 {
-                    var uri = new Uri(person.SpoProfilePictureUrl.ToString());
+                    var uri = new Uri(person.SpoProfilePictureUrlLarge.ToString());
                     var extension = Path.GetExtension(uri.AbsolutePath);
                     
-                    var filename = SanitizeFileName(person.Upn.Upn) + extension; //uri.Segments.Last();
-                    
+                    var filename = SanitizeFileName(person.Upn.Upn) + extension;
                     var fullPath = Path.Combine(PhotoDirectory, filename);
+
+                    var record = new ImportExportRecord() { PhotoLocation = String.Empty, Upn = person.Upn.Upn };
 
                     // download the file
                     var pictureStream = _o365.DownloadProfilePhoto(person, service);
+                    
+                    if (IsPhotoLargeSilouette(pictureStream))
+                    {
+                        // this is a silouette photo ... move on
+                        continue;
+                    }
+                    else
+                    {
+                        // save the picture
+                        using (FileStream fs = new FileStream(fullPath, FileMode.Create))
+                        {
+                            if (pictureStream.CanSeek) pictureStream.Seek(0, SeekOrigin.Begin);
+                            pictureStream.CopyTo(fs);
+                        }
 
-                    // save the picture
-                    using (FileStream fs = new FileStream(fullPath, FileMode.Create))
-                    {
-                        if(pictureStream.CanSeek) pictureStream.Seek(0, SeekOrigin.Begin);
-                        pictureStream.CopyTo(fs);
+                        record.PhotoLocation = fullPath;
                     }
-                    
-                    // save them for later
-                    if (!_allPeople.ContainsKey(person.Upn.Upn))
-                    {
-                        _allPeople[person.Upn.Upn] = new ImportExportRecord() {PhotoLocation = fullPath, Upn = person.Upn.Upn};
-                    }
-                    
+
+                    // keep their record
+                    _allPeople[person.Upn.Upn] = record;
+
                 }
                 catch (Exception e)
                 {
@@ -119,6 +148,17 @@ namespace Hyperfish.ImportExport
             }
 
             return filename;
+        }
+        
+        private static bool IsPhotoLargeSilouette(MemoryStream pictureToCompare)
+        {
+            if (_silouetteProfilePicLarge.Length != pictureToCompare.Length)
+                return false;
+
+            pictureToCompare.Position = 0;
+            var pictureBytes = pictureToCompare.ToArray();
+
+            return _silouetteProfilePicLarge.SequenceEqual(pictureBytes);
         }
 
         private void EnsurePhotosDirectory()
