@@ -82,34 +82,38 @@ namespace Hyperfish.ImportExport
                     continue;
                 }
 
+                Logger.Info($"Found user {person.Upn} attempting to download photo");
+
                 if (service == O365Service.Spo && !person.HasSpoProfilePicture)
                 {
                     Logger.Info($"Found user {person.Upn}, but skipping as they dont have a photo set");
                     continue;
                 }
                 
-                Logger.Info($"Found user {person.Upn} downloading photo");
-
                 try
                 {
-                    var uri = new Uri(person.SpoProfilePictureUrlLarge.ToString());
-                    var extension = Path.GetExtension(uri.AbsolutePath);
-                    
-                    var filename = SanitizeFileName(person.Upn.Upn) + extension;
+                    var filename = SanitizeFileName(person.Upn.Upn) + ".jpg";
                     var fullPath = Path.Combine(PhotoDirectory, filename);
-
                     var record = new ImportExportRecord() { PhotoLocation = String.Empty, Upn = person.Upn.Upn };
 
-                    // download the file
                     var pictureStream = _o365.DownloadProfilePhoto(person, service);
-                    
+
+                    if (pictureStream == null)
+                    {
+                        Logger.Info($"Image failed to download for {person.Upn}, moving on");
+                        continue;
+                    }
+
                     if (IsPhotoLargeSilouette(pictureStream))
                     {
                         // this is a silouette photo ... move on
+                        Logger.Info($"Image for {person.Upn} is a silouette, moving on");
                         continue;
                     }
                     else
                     {
+                        Logger.Info($"Got photo for {person.Upn}, saving to {fullPath}");
+
                         // save the picture
                         using (FileStream fs = new FileStream(fullPath, FileMode.Create))
                         {
