@@ -170,9 +170,7 @@
   <ItemGroup>
     <Content Include="lib\Microsoft.Exchange.WebServices.dll" />
     <Content Include="lib\ReadMe.txt" />
-    <EmbeddedResource Include="O365\assets\silhouette_LThumb.jpg">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </EmbeddedResource>
+    <EmbeddedResource Include="O365\assets\silhouette_LThumb.jpg" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
