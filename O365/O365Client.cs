@@ -78,7 +78,7 @@ namespace Hyperfish.ImportExport.O365
             {
                 case O365Service.Spo:
 
-                    var clientContext = GetSpoClientContextForSite(SpoSite.MySite);
+                    var clientContext = GetSpoClientContextForSite(SpoSite.Admin);
 
                     UpdateSpoPhoto(clientContext, person.Upn, photoStream);
 
