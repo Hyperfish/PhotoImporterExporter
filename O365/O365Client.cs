@@ -8,6 +8,7 @@ using Hyperfish.ImportExport.Helpers;
 using Hyperfish.ImportExport.O365.Exceptions;
 using Microsoft.Exchange.WebServices.Data;
 using Microsoft.SharePoint.Client;
+using Microsoft.SharePoint.Client.Search.Query;
 using Microsoft.SharePoint.Client.UserProfiles;
 using static Hyperfish.ImportExport.Log;
 
@@ -47,7 +48,7 @@ namespace Hyperfish.ImportExport.O365
                     {
                         f.Stream.CopyTo(memoryStream);
                     }
-                    
+
                     return memoryStream;
 
                 case O365Service.Exo:
@@ -102,32 +103,31 @@ namespace Hyperfish.ImportExport.O365
             Logger?.Debug($"O365 paging through all users.");
 
             // get the list of users to audit
-            var siteUsers = GetRootSiteUserList();
+            var loginNames = GetUserLoginNamesFromSearch();
 
             // batch profile requests into 100s
-            var batches = SplitList(siteUsers, 100);
+            var batches = SplitList(loginNames, 100);
 
             Logger?.Debug($"[O365] Batching profile fetch into {batches.Count}. Elapsed time: {sw.Elapsed.TotalSeconds} seconds");
 
             foreach (var batch in batches)
             {
-
                 // get the user profiles from SPO
                 var userProfiles = GetProfilesForUsers(batch);
 
                 // make O365Profiles for each user
                 var o365Profiles = userProfiles
-                    .Where(p => p.ServerObjectIsNull != null && p.ServerObjectIsNull.Value != true)
-                    .Select(u =>
-                    {
-                        var upn = u.AccountName.Contains('|') ? u.AccountName.Split('|').Last() : string.Empty;
-
-                        return new O365Profile(new UpnIdentifier(upn))
+                        .Where(p => p.ServerObjectIsNull != null && p.ServerObjectIsNull.Value != true)
+                        .Select(u =>
                         {
-                            Properties = u.UserProfileProperties.Where(p => !string.IsNullOrEmpty(p.Value)).ToDictionary(p => p.Key, p => (object)p.Value)
-                        };
-                    })
-                    .Where(u => !string.IsNullOrEmpty(u.Upn.Upn)).ToList();
+                            var upn = u.AccountName.Contains('|') ? u.AccountName.Split('|').Last() : string.Empty;
+
+                            return new O365Profile(new UpnIdentifier(upn))
+                            {
+                                Properties = u.UserProfileProperties.Where(p => !string.IsNullOrEmpty(p.Value)).ToDictionary(p => p.Key, p => (object)p.Value)
+                            };
+                        })
+                        .Where(u => !string.IsNullOrEmpty(u.Upn.Upn)).ToList();
 
                 Logger?.Debug($"[O365] Found {o365Profiles.Count}. Elapsed time: {sw.Elapsed.TotalSeconds} seconds");
 
@@ -146,7 +146,71 @@ namespace Hyperfish.ImportExport.O365
             Logger?.Debug($"[O365] Completed batching {batches.Count}. Elapsed time: {sw.Elapsed.TotalSeconds} seconds");
 
         }
-        
+
+        private List<string> GetUserLoginNamesFromSearch()
+        {
+            Logger?.Debug($"[O365] Getting user list from search");
+
+            try
+            {
+                List<string> loginNames = new List<string>();
+
+                var ctx = GetSpoClientContextForSite(SpoSite.RootSite);
+                SearchExecutor searchExecutor = new SearchExecutor(ctx);
+
+                int currentPage = 0;
+                int totalRows = -1;
+                int startRow = 1;
+                int rowLimit = 10;
+                do
+                {
+                    startRow = (rowLimit * currentPage) + 1;
+
+                    // http://www.techmikael.com/2015/01/how-to-query-using-result-source-name.html
+                    KeywordQuery qry = new KeywordQuery(ctx);
+                    qry.Properties["SourceName"] = "Local People Results";
+                    qry.Properties["SourceLevel"] = "SSA";
+
+                    qry.QueryText = "*";
+                    qry.RowLimit = rowLimit;
+                    qry.StartRow = startRow;
+
+                    ClientResult<ResultTableCollection> results = searchExecutor.ExecuteQuery(qry);
+                    ctx.ExecuteQueryWithIncrementalRetry(SpoRetries, SpoBackoff, Logger);
+
+                    var resultTable = results.Value[0];
+
+                    if (currentPage == 0)
+                    {
+                        totalRows = resultTable.TotalRows;
+                    }
+
+                    foreach (var resultRow in resultTable.ResultRows)
+                    {
+                        loginNames.Add(resultRow["AccountName"].ToString());
+                    }
+
+                    currentPage++;
+
+                } while (startRow + rowLimit < totalRows);
+
+                return loginNames;
+            }
+            catch (MaximumRetryAttemptedException ex)
+            {
+                // Exception handling for the Maximum Retry Attempted
+                Logger?.Error($"[O365] Max retries / throttle for SPO reached getting site user list. Message {ex.Message}");
+                throw new O365Exception($"Max retries / throttle for SPO reached. Message {ex.Message}", ex);
+            }
+            catch (Exception ex)
+            {
+                Logger?.Error($"[O365] Problem getting root site user list. Message {ex.Message}");
+                throw new O365Exception($"Problem getting root site user list. Message {ex.Message}", ex);
+            }
+
+        }
+
+
         private List<User> GetRootSiteUserList()
         {
             Logger?.Debug($"[O365] Getting root site user list");
@@ -162,15 +226,15 @@ namespace Hyperfish.ImportExport.O365
 
                 // get users who are users, not groups etc...
                 var usersQuery = from user in web.SiteUsers
-                    where user.PrincipalType == Microsoft.SharePoint.Client.Utilities.PrincipalType.User 
-                        && user.IsShareByEmailGuestUser == false 
-                        && user.IsEmailAuthenticationGuestUser == false
-                    select user;
+                                                 where user.PrincipalType == Microsoft.SharePoint.Client.Utilities.PrincipalType.User
+                                                         && user.IsShareByEmailGuestUser == false
+                                                         && user.IsEmailAuthenticationGuestUser == false
+                                                 select user;
 
                 var siteUsers = ctx.LoadQuery(usersQuery);
 
                 // execute the query to the service
-                ctx.ExecuteQueryWithIncrementalRetry(SpoRetries, SpoBackoff, Logger); 
+                ctx.ExecuteQueryWithIncrementalRetry(SpoRetries, SpoBackoff, Logger);
 
                 return siteUsers.ToList();
             }
@@ -187,19 +251,19 @@ namespace Hyperfish.ImportExport.O365
             }
         }
 
-        private List<PersonProperties> GetProfilesForUsers(IList<User> users)
+        private List<PersonProperties> GetProfilesForUsers(IList<string> loginNames)
         {
             var ctx = GetSpoClientContextForSite(SpoSite.Admin);
             var peopleManager = new PeopleManager(ctx);
             var userProfiles = new List<PersonProperties>();
 
-            Logger?.Debug($"[O365] Getting profiles for {users.Count} users");
+            Logger?.Debug($"[O365] Getting profiles for {loginNames.Count} users");
 
             try
             {
-                foreach (var user in users)
+                foreach (var loginName in loginNames)
                 {
-                    var userProfile = peopleManager.GetPropertiesFor(user.LoginName);
+                    var userProfile = peopleManager.GetPropertiesFor(loginName);
                     ctx.Load(userProfile);
                     userProfiles.Add(userProfile);
                 }
@@ -219,7 +283,7 @@ namespace Hyperfish.ImportExport.O365
 
             return userProfiles;
         }
-        
+
         private ClientContext GetSpoClientContextForSite(SpoSite type)
         {
             string siteUri;
@@ -284,7 +348,7 @@ namespace Hyperfish.ImportExport.O365
         {
             var targetUser = O365Settings.SpoProfilePrefix + upn.Upn;
             PeopleManager peopleManager = new PeopleManager(clientContext);
-            
+
             peopleManager.SetSingleValueProfileProperty(targetUser, attributeName, value.ToString());
         }
 
@@ -293,10 +357,10 @@ namespace Hyperfish.ImportExport.O365
             const string library = @"/User Photos/Profile Pictures";
 
             var mySitePhotos = new List<ProfilePhoto>()
-            {
-                new ProfilePhoto(PhotoSize.S), new ProfilePhoto(PhotoSize.M), new ProfilePhoto(PhotoSize.L)
-            };
-            
+                        {
+                                new ProfilePhoto(PhotoSize.S), new ProfilePhoto(PhotoSize.M), new ProfilePhoto(PhotoSize.L)
+                        };
+
             var mySiteHostClientContext = GetSpoClientContextForSite(SpoSite.MySite);
 
             try
@@ -323,18 +387,18 @@ namespace Hyperfish.ImportExport.O365
                 Logger?.Error($"Problem resizing/uploading photo. Message: {ex.Message}");
                 throw new O365Exception($"Problem resizing/uploading photo. Message: {ex.Message}", ex);
             }
-            
+
             try
             {
                 Logger?.Debug($"Setting the PictureUrl and SPS-PicturePlaceholderState");
-                
+
                 var relativeMedPhotoPath = mySitePhotos.First(p => p.Size == PhotoSize.M).Url(upn.Upn, library);
                 var medPhotoPath = new Uri(new Uri(mySiteHostClientContext.Url), relativeMedPhotoPath).AbsoluteUri;
 
                 // update the profile with the URL for the photo and the placeholderstate
                 this.UpdateBasicSpoAttribute(clientContext, upn, "PictureURL", medPhotoPath);
                 this.UpdateBasicSpoAttribute(clientContext, upn, "SPS-PicturePlaceholderState", "0");
-                
+
                 // make the changes
                 clientContext.ExecuteQueryWithIncrementalRetry(SpoRetries, SpoBackoff, Logger);
 
@@ -377,7 +441,7 @@ namespace Hyperfish.ImportExport.O365
             }
 
         }
-        
+
         private static byte[] FormatAndSizeImageForExo(Stream photoStream)
         {
             try
@@ -396,10 +460,10 @@ namespace Hyperfish.ImportExport.O365
         private IList<List<T>> SplitList<T>(IList<T> source, int groupSize)
         {
             return source
-                .Select((x, i) => new { Index = i, Value = x })
-                .GroupBy(x => x.Index / groupSize)
-                .Select(x => x.Select(v => v.Value).ToList<T>())
-                .ToList();
+                    .Select((x, i) => new { Index = i, Value = x })
+                    .GroupBy(x => x.Index / groupSize)
+                    .Select(x => x.Select(v => v.Value).ToList<T>())
+                    .ToList();
         }
     }
 
