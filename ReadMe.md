@@ -12,3 +12,7 @@ Example use cases:
 
 It's a work in progress :)
 
+## Versions
+
+### v1.2.0 (2018-12-19)
+- bug fix to set profile properties using API on admin site collection vs. mysite [\#2](https://github.com/Hyperfish/PhotoImporterExporter/pull/2)
