@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Drawing.Imaging;
 using System.Drawing.Drawing2D;
+using System.Globalization;
 using ImageResizer;
 using ImageResizer.ExtensionMethods;
 
@@ -87,7 +88,7 @@ namespace Hyperfish.ImportExport.O365
 
         private static void ResizeAndFormatImage(Stream imageIn, Stream imageOut, double scaleFactor, int quality)
         {
-            var settings = new ResizeSettings("zoom=" + scaleFactor.ToString());
+            var settings = new ResizeSettings("zoom=" + scaleFactor.ToString(CultureInfo.CreateSpecificCulture("en-US")));
             settings.Scale = ScaleMode.DownscaleOnly;
             settings.Quality = quality;
             settings.Format = "jpg";
