@@ -8,6 +8,7 @@ using Hyperfish.ImportExport.Helpers;
 using Hyperfish.ImportExport.O365.Exceptions;
 using Microsoft.Exchange.WebServices.Data;
 using Microsoft.SharePoint.Client;
+using Microsoft.SharePoint.Client.Search.Query;
 using Microsoft.SharePoint.Client.UserProfiles;
 using static Hyperfish.ImportExport.Log;
 
@@ -102,10 +103,10 @@ namespace Hyperfish.ImportExport.O365
             Logger?.Debug($"O365 paging through all users.");
 
             // get the list of users to audit
-            var siteUsers = GetRootSiteUserList();
+            var loginNames = GetUserLoginNamesFromSearch();
 
             // batch profile requests into 100s
-            var batches = SplitList(siteUsers, 100);
+            var batches = SplitList(loginNames, 100);
 
             Logger?.Debug($"[O365] Batching profile fetch into {batches.Count}. Elapsed time: {sw.Elapsed.TotalSeconds} seconds");
 
@@ -146,7 +147,71 @@ namespace Hyperfish.ImportExport.O365
             Logger?.Debug($"[O365] Completed batching {batches.Count}. Elapsed time: {sw.Elapsed.TotalSeconds} seconds");
 
         }
-        
+
+        private List<string> GetUserLoginNamesFromSearch()
+        {
+            Logger?.Debug($"[O365] Getting user list from search");
+
+            try
+            {
+                List<string> loginNames = new List<string>();
+
+                var ctx = GetSpoClientContextForSite(SpoSite.RootSite);
+                SearchExecutor searchExecutor = new SearchExecutor(ctx);
+
+                int currentPage = 0;
+                int totalRows = -1;
+                int startRow = 1;
+                int rowLimit = 10;
+                do
+                {
+                    startRow = (rowLimit * currentPage) + 1;
+
+                    // http://www.techmikael.com/2015/01/how-to-query-using-result-source-name.html
+                    KeywordQuery qry = new KeywordQuery(ctx);
+                    qry.Properties["SourceName"] = "Local People Results";
+                    qry.Properties["SourceLevel"] = "SSA";
+
+                    qry.QueryText = "*";
+                    qry.RowLimit = rowLimit;
+                    qry.StartRow = startRow;
+
+                    ClientResult<ResultTableCollection> results = searchExecutor.ExecuteQuery(qry);
+                    ctx.ExecuteQueryWithIncrementalRetry(SpoRetries, SpoBackoff, Logger);
+
+                    var resultTable = results.Value[0];
+
+                    if (currentPage == 0)
+                    {
+                        totalRows = resultTable.TotalRows;
+                    }
+
+                    foreach (var resultRow in resultTable.ResultRows)
+                    {
+                        loginNames.Add(resultRow["AccountName"].ToString());
+                    }
+
+                    currentPage++;
+
+                } while (startRow + rowLimit < totalRows);
+
+                return loginNames;
+            }
+            catch (MaximumRetryAttemptedException ex)
+            {
+                // Exception handling for the Maximum Retry Attempted
+                Logger?.Error($"[O365] Max retries / throttle for SPO reached getting site user list. Message {ex.Message}");
+                throw new O365Exception($"Max retries / throttle for SPO reached. Message {ex.Message}", ex);
+            }
+            catch (Exception ex)
+            {
+                Logger?.Error($"[O365] Problem getting root site user list. Message {ex.Message}");
+                throw new O365Exception($"Problem getting root site user list. Message {ex.Message}", ex);
+            }
+
+        }
+
+
         private List<User> GetRootSiteUserList()
         {
             Logger?.Debug($"[O365] Getting root site user list");
@@ -187,19 +252,19 @@ namespace Hyperfish.ImportExport.O365
             }
         }
 
-        private List<PersonProperties> GetProfilesForUsers(IList<User> users)
+        private List<PersonProperties> GetProfilesForUsers(IList<string> loginNames)
         {
             var ctx = GetSpoClientContextForSite(SpoSite.Admin);
             var peopleManager = new PeopleManager(ctx);
             var userProfiles = new List<PersonProperties>();
 
-            Logger?.Debug($"[O365] Getting profiles for {users.Count} users");
+            Logger?.Debug($"[O365] Getting profiles for {loginNames.Count} users");
 
             try
             {
-                foreach (var user in users)
+                foreach (var loginName in loginNames)
                 {
-                    var userProfile = peopleManager.GetPropertiesFor(user.LoginName);
+                    var userProfile = peopleManager.GetPropertiesFor(loginName);
                     ctx.Load(userProfile);
                     userProfiles.Add(userProfile);
                 }
